@@ -1,0 +1,42 @@
+name: 버그 제보
+description: 발생한 문제와 재현 방법을 공유합니다.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "비밀번호, API 키, 개인정보는 작성하지 마세요. 보안 문제는 관리자에게 비공개로 알려주세요."
+  - type: textarea
+    id: problem
+    attributes:
+      label: 문제 설명
+      description: 어떤 문제가 발생했나요?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 방법
+      placeholder: |
+        1. 어떤 화면에서
+        2. 어떤 동작을 하면
+        3. 어떤 문제가 발생하는지
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대한 동작
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 실행 환경
+      description: OS, 브라우저 또는 런타임 버전, 브랜치나 커밋 등 관련 정보를 적어주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 로그 및 참고 자료
+      description: 비밀 정보를 제거한 로그나 스크린샷을 첨부해주세요.

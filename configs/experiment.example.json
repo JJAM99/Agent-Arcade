@@ -1,0 +1,7 @@
+{
+  "experiment_name": "baseline",
+  "seed": 42,
+  "input_path": "data/processed/",
+  "output_path": "reports/",
+  "model_path": "models/"
+}

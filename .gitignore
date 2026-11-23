@@ -1,0 +1,71 @@
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment variables and local credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+.aws/
+*.pem
+*.key
+
+# Dependencies and virtual environments
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Generated output and caches
+/dist/
+/build/
+/out/
+.next/
+.nuxt/
+.cache/
+.parcel-cache/
+.turbo/
+coverage/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.tsbuildinfo
+
+# Local logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Notebook runtime files
+.ipynb_checkpoints/
+.jupyter/
+.ipython/
+
+# Local datasets (keep directory placeholders)
+/data/raw/*
+!/data/raw/.gitkeep
+/data/external/*
+!/data/external/.gitkeep
+/data/interim/*
+!/data/interim/.gitkeep
+/data/processed/*
+!/data/processed/.gitkeep
+
+# Model artifacts
+/models/*
+!/models/README.md
+!/models/.gitkeep

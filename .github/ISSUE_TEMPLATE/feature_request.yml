@@ -1,0 +1,33 @@
+name: 기능 제안 및 작업
+description: 새 기능, 개선 사항, 문서 및 설정 작업을 제안합니다.
+title: "[Task] "
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 목적
+      description: 어떤 문제를 해결하려고 하나요?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 작업 내용
+      description: 필요한 작업과 범위를 작성해주세요.
+      placeholder: |
+        - [ ] 작업 1
+        - [ ] 작업 2
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 기준
+      description: 어떤 결과를 확인하면 이 작업이 완료되나요?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 참고 사항
+      description: 관련 이슈, 디자인, 의존 작업이나 대안이 있으면 작성해주세요.
