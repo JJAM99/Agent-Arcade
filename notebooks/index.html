@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>이동 연습</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #101821;
+      color: #f0f4f8;
+      font: 16px system-ui, sans-serif;
+    }
+
+    main {
+      width: min(640px, 90vw);
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: 24px;
+    }
+
+    #lives-status {
+      margin-left: 12px;
+      color: #f2bc84;
+      white-space: nowrap;
+    }
+
+    .health {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .health-bar {
+      display: flex;
+      gap: 4px;
+    }
+
+    .health-slot {
+      width: 28px;
+      height: 12px;
+      border: 1px solid #ff9b9b;
+      border-radius: 3px;
+      background: #ff7373;
+    }
+
+    .health-slot.is-empty {
+      background: transparent;
+      border-color: #708293;
+    }
+
+    .attack-status {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      color: #c9d8e3;
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .attack-status progress {
+      width: 92px;
+      height: 12px;
+      accent-color: #ffcb75;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+    }
+
+    p {
+      color: #c9d8e3;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>이동 연습</h1>
+    <p>
+      <span id="stage-status">스테이지 1 / 5 · 접촉 공격</span>
+      <span id="lives-status"></span>
+    </p>
+    <div class="health">
+      <span id="health-label">체력</span>
+      <div class="health-bar" role="progressbar" aria-labelledby="health-label"
+           aria-valuemin="0" aria-valuemax="3" aria-valuenow="3">
+        <span class="health-slot"></span>
+        <span class="health-slot"></span>
+        <span class="health-slot"></span>
+      </div>
+    </div>
+    <div class="attack-status">
+      <span><kbd>Space</kbd> 공격</span>
+      <progress id="attack-progress" max="1" value="1" aria-label="공격 준비 게이지"></progress>
+      <span id="attack-timer">공격 가능</span>
+    </div>
+    <canvas id="room" width="640" height="400" aria-label="캐릭터 이동 연습방"></canvas>
+    <p><kbd>W</kbd> 위 · <kbd>A</kbd> 왼쪽 · <kbd>S</kbd> 아래 · <kbd>D</kbd> 오른쪽</p>
+  </main>
+
+  <script>
+    const canvas = document.querySelector('#room');
+    const ctx = canvas.getContext('2d');
+    const wall = 20;
+    const knockbackDistance = 36;
+    const hitFlashDuration = 90;
+    const hitEffectDuration = 280;
+    const playerAttackCooldown = 500;
+    const monsterAttackRange = 78;
+    const monsterAttackHalfAngle = Math.PI / 4;
+    const monsterWindupDuration = 400;
+    const monsterSwingDuration = 160;
+    const monsterAttackCooldown = 900;
+    const rangedAttackRange = 220;
+    const rangedWindupDuration = 500;
+    const projectileSpeed = 240;
+    const projectileRadius = 6;
+    const turretRange = 265;
+    const turretWindupDuration = 650;
+    const turretCooldown = 2800;
+    const turretProjectileSpeed = 195;
+    const bossSlamRange = 92;
+    const bossSpreadOffsets = [-0.24, 0, 0.24];
+    const bossGuardDuration = 720;
+    const bossAttacksPerGuard = 3;
+    const livesPerStage = 3;
+    const monsterHealthSlots = 5;
+    const monsterHealthColors = ['#627383', '#ff7373', '#ffbf62', '#58d7eb', '#d19bff', '#b4ed78'];
+    const stages = [
+      { label: '접촉 공격', x: 100, y: 80, hp: 5, melee: false, ranged: false },
+      { label: '근접 공격', x: 450, y: 80, hp: 10, melee: true, ranged: false },
+      { label: '근접 + 원거리 공격', x: 470, y: 285, hp: 15, melee: true, ranged: true },
+      {
+        label: '몬스터 + 포탑', x: 470, y: 285, hp: 20, melee: true, ranged: true,
+        turrets: [{ x: 115, y: 294, delay: 850 }, { x: 535, y: 100, delay: 1900 }]
+      },
+      {
+        label: '보스 방 · 포탑 3개', x: 342, y: 54, hp: 25, boss: true, melee: true, ranged: true,
+        speed: 118, chaseRange: 200, meleeWindup: 330, rangedWindup: 420,
+        rangedSpeed: 280, attackCooldown: 720, recovery: 260,
+        turretRange: 290, turretWindup: 525, turretCooldown: 2250, turretSpeed: 225,
+        turrets: [
+          { x: 107, y: 89, delay: 900 },
+          { x: 534, y: 92, delay: 1700 },
+          { x: 319, y: 335, delay: 2550 }
+        ]
+      }
+    ];
+    const player = { x: 304, y: 184, size: 32, speed: 200, flashUntil: 0 };
+    const monster = {
+      x: 100, y: 80, size: 28, speed: 90,
+      hp: stages[0].hp,
+      alive: true,
+      flashUntil: 0
+    };
+    const boss = { meleeCount: 0, rangedCount: 0, attacksUntilGuard: 0, guardUntil: 0, blockUntil: 0 };
+    let attackEffect = null;
+    let nextPlayerAttackAt = 0;
+    let monsterAttack = null;
+    let nextMonsterAttackAt = 0;
+    let projectiles = [];
+    let lastSpreadHit = null;
+    let turrets = [];
+    let hitEffects = [];
+    let stageIndex = 0;
+    let previousTime = null;
+    let framePending = false;
+    const pressedKeys = new Set();
+    const healthBar = document.querySelector('.health-bar');
+    const healthSlots = healthBar.querySelectorAll('.health-slot');
+    const attackProgress = document.querySelector('#attack-progress');
+    const attackTimer = document.querySelector('#attack-timer');
+    const stageStatus = document.querySelector('#stage-status');
+    const livesStatus = document.querySelector('#lives-status');
+    let health = healthSlots.length;
+    let lives = livesPerStage;
+    let wasTouchingMonster = false;
+
+    // code는 입력 언어와 관계없이 키보드의 물리적인 키 위치를 나타냅니다.
+    window.addEventListener('keydown', (event) => {
+      if (event.code === 'KeyR' && ((health === 0 && lives === 0) || !monster.alive)) {
+        window.location.reload();
+        return;
+      }
+      if (event.code === 'Enter' && !event.repeat && health === 0 && lives > 0) {
+        startStage(stageIndex, true);
+        return;
+      }
+      if (event.code === 'Enter' && !event.repeat && health > 0 &&
+          !monster.alive && stageIndex < stages.length - 1) {
+        startStage(stageIndex + 1);
+        return;
+      }
+      if (event.code === 'Space') {
+        event.preventDefault();
+        if (!event.repeat) attackMonster();
+        return;
+      }
+      pressedKeys.add(event.code);
+    });
+    window.addEventListener('keyup', (event) => pressedKeys.delete(event.code));
+    window.addEventListener('blur', () => pressedKeys.clear());
+    function startStage(index, retry = false) {
+      stageIndex = index;
+      const stage = stages[stageIndex];
+      const startingHp = retry ? monster.hp : stage.hp;
+      if (!retry) lives = livesPerStage;
+      Object.assign(player, { x: 304, y: 184, flashUntil: 0 });
+      Object.assign(monster, {
+        x: stage.x, y: stage.y, hp: startingHp, speed: stage.speed ?? 90, alive: true, flashUntil: 0
+      });
+      Object.assign(boss, {
+        meleeCount: 0, rangedCount: 0, attacksUntilGuard: bossAttacksPerGuard, guardUntil: 0, blockUntil: 0
+      });
+      const now = performance.now();
+      turrets = (stage.turrets || []).map(({ x, y, delay }) => ({
+        x, y, angle: 0, fireAt: null, readyAt: now + delay
+      }));
+
+      health = healthSlots.length;
+      healthSlots.forEach((slot) => slot.classList.remove('is-empty'));
+      healthBar.setAttribute('aria-valuenow', health);
+      stageStatus.textContent = `스테이지 ${stageIndex + 1} / ${stages.length} · ${stage.label}`;
+      updateLivesStatus();
+
+      wasTouchingMonster = false;
+      pressedKeys.clear();
+      attackEffect = null;
+      monsterAttack = null;
+      projectiles = [];
+      lastSpreadHit = null;
+      hitEffects = [];
+      nextPlayerAttackAt = 0;
+      nextMonsterAttackAt = 0;
+      previousTime = null;
+      queueFrame();
+    }
+
+    function updateLivesStatus() {
+      livesStatus.textContent = `목숨 ${lives} / ${livesPerStage}`;
+    }
+
+    function attackMonster() {
+      if (health === 0 || !monster.alive) return;
+
+      const now = performance.now();
+      if (now < nextPlayerAttackAt) return;
+      nextPlayerAttackAt = now + playerAttackCooldown;
+
+      const x = player.x + player.size / 2;
+      const y = player.y + player.size / 2;
+      const dx = monster.x + monster.size / 2 - x;
+      const dy = monster.y + monster.size / 2 - y;
+      const distance = Math.hypot(dx, dy);
+      const range = 64;
+      const length = Math.min(distance, range);
+      const directionLength = distance || 1;
+
+      attackEffect = {
+        x,
+        y,
+        endX: x + (dx / directionLength) * length,
+        endY: y + (dy / directionLength) * length,
+        until: now + 120
+      };
+
+      if (distance <= range) {
+        if (now < boss.guardUntil) {
+          boss.blockUntil = now + 350;
+          return;
+        }
+        monster.hp -= 1;
+        showHitEffect(monster);
+
+        if (monster.hp === 0) {
+          monster.alive = false;
+        }
+      }
+    }
+
+    function updateAttackStatus(now) {
+      if (health === 0 || !monster.alive) {
+        attackProgress.value = 0;
+        attackTimer.textContent = '전투 종료';
+        return;
+      }
+
+      const remaining = Math.max(0, nextPlayerAttackAt - now);
+      attackProgress.value = 1 - remaining / playerAttackCooldown;
+
+      const secondsLeft = (Math.ceil(remaining / 100) / 10).toFixed(1);
+      const status = remaining > 0
+        ? `다음 공격 ${secondsLeft}초`
+        : `공격 가능 · ${(playerAttackCooldown / 1000).toFixed(1)}초 간격`;
+      if (attackTimer.textContent !== status) attackTimer.textContent = status;
+    }
+
+    function update(seconds, now) {
+      let dx = 0;
+      let dy = 0;
+      if (pressedKeys.has('KeyW')) dy -= 1;
+      if (pressedKeys.has('KeyA')) dx -= 1;
+      if (pressedKeys.has('KeyS')) dy += 1;
+      if (pressedKeys.has('KeyD')) dx += 1;
+
+      // 대각선 이동도 한 방향으로 움직일 때와 같은 속도를 유지합니다.
+      const length = Math.hypot(dx, dy) || 1;
+      player.x += (dx / length) * player.speed * seconds;
+      player.y += (dy / length) * player.speed * seconds;
+
+      keepPlayerInsideRoom();
+
+      updateMonster(seconds, now);
+      if (health > 0) {
+        updateTurrets(now);
+        updateProjectiles(seconds);
+      }
+      updateHealth();
+    }
+
+    function keepPlayerInsideRoom() {
+      player.x = Math.max(wall, Math.min(player.x, canvas.width - wall - player.size));
+      player.y = Math.max(wall, Math.min(player.y, canvas.height - wall - player.size));
+    }
+
+    function updateMonster(seconds, now) {
+      if (!monster.alive || now < boss.guardUntil) return;
+      // 몬스터 중심에서 캐릭터 중심까지의 가로·세로 차이
+      const toPlayerX = (player.x + player.size / 2) - (monster.x + monster.size / 2);
+      const toPlayerY = (player.y + player.size / 2) - (monster.y + monster.size / 2);
+      const distance = Math.hypot(toPlayerX, toPlayerY);
+      const stage = stages[stageIndex];
+
+      if (monsterAttack && now >= monsterAttack.recoveryEndsAt) monsterAttack = null;
+
+      if (monsterAttack) {
+        if (!monsterAttack.hasSwung && now >= monsterAttack.strikeAt && now < monsterAttack.endsAt) {
+          monsterAttack.hasSwung = true;
+          resolveMonsterAttack(toPlayerX, toPlayerY, distance);
+        }
+        return;
+      }
+
+      if (now >= nextMonsterAttackAt) {
+        if (stage.boss && boss.attacksUntilGuard === 0 && distance <= 155) {
+          boss.guardUntil = now + bossGuardDuration;
+          boss.attacksUntilGuard = bossAttacksPerGuard;
+          return;
+        }
+
+        const slam = stage.boss && boss.meleeCount % 2 === 1;
+        if (stage.melee && distance <= (slam ? bossSlamRange : monsterAttackRange)) {
+          const windup = slam ? 500 : stage.meleeWindup ?? monsterWindupDuration;
+          startMonsterAttack(slam ? 'slam' : 'melee', toPlayerX, toPlayerY, now, windup);
+          return;
+        }
+        if (stage.ranged && distance <= rangedAttackRange &&
+            !projectiles.some((projectile) => projectile.source === 'monster')) {
+          const spread = stage.boss && boss.rangedCount % 2 === 1;
+          const windup = spread ? 550 : stage.rangedWindup ?? rangedWindupDuration;
+          startMonsterAttack(spread ? 'spread' : 'ranged', toPlayerX, toPlayerY, now, windup);
+          return;
+        }
+      }
+
+      const detectionRange = stage.chaseRange ?? 160;
+
+      if (distance <= detectionRange) {
+        if (!isTouchingMonster()) {
+          const step = Math.min(Math.abs(monster.speed) * seconds, distance);
+          monster.x += (toPlayerX / distance) * step;
+          monster.y += (toPlayerY / distance) * step;
+        }
+        return;
+      }
+      // monster.x += monster.speed * seconds;
+
+      // const rightWall = canvas.width - wall - monster.size;
+
+      // if (monster.x <= wall) {
+      //   monster.x = wall;
+      //   monster.speed = Math.abs(monster.speed);
+      // } else if (monster.x >= rightWall) {
+      //   monster.x = rightWall;
+      //   monster.speed = -Math.abs(monster.speed);
+      // }
+    }
+
+    function startMonsterAttack(type, dx, dy, now, windupDuration) {
+      const stage = stages[stageIndex];
+      const strikeAt = now + windupDuration;
+      const endsAt = strikeAt + monsterSwingDuration;
+      const recoveryEndsAt = endsAt + (stage.recovery ?? 0);
+
+      // 예고가 시작될 때의 방향을 고정해서 옆으로 피할 수 있게 합니다.
+      monsterAttack = { type, angle: Math.atan2(dy, dx), strikeAt, endsAt, recoveryEndsAt, hasSwung: false };
+      nextMonsterAttackAt = recoveryEndsAt + (stage.attackCooldown ?? monsterAttackCooldown);
+
+      if (stage.boss) {
+        boss.attacksUntilGuard = Math.max(0, boss.attacksUntilGuard - 1);
+        if (type === 'melee' || type === 'slam') boss.meleeCount += 1;
+        else boss.rangedCount += 1;
+      }
+    }
+
+    function resolveMonsterAttack(dx, dy, distance) {
+      const { type, angle } = monsterAttack;
+      if (type === 'ranged' || type === 'spread') {
+        const x = monster.x + monster.size / 2;
+        const y = monster.y + monster.size / 2;
+        if (type === 'spread') {
+          for (const offset of bossSpreadOffsets) {
+            launchProjectile(x, y, angle + offset, 245, 'monster', monsterAttack.strikeAt);
+          }
+        } else {
+          launchProjectile(x, y, angle, stages[stageIndex].rangedSpeed ?? projectileSpeed, 'monster');
+        }
+        return;
+      }
+
+      if (type === 'slam') {
+        if (distance <= bossSlamRange) damagePlayer();
+        return;
+      }
+
+      const forwardDistance = dx * Math.cos(angle) + dy * Math.sin(angle);
+      if (distance <= monsterAttackRange && forwardDistance >= distance * Math.cos(monsterAttackHalfAngle)) {
+        damagePlayer();
+      }
+    }
+
+    function updateTurrets(now) {
+      const stage = stages[stageIndex];
+      for (const turret of turrets) {
+        if (turret.fireAt !== null) {
+          if (now >= turret.fireAt) {
+            launchProjectile(turret.x, turret.y, turret.angle, stage.turretSpeed ?? turretProjectileSpeed, 'turret');
+            turret.fireAt = null;
+            turret.readyAt = now + (stage.turretCooldown ?? turretCooldown);
+          }
+          continue;
+        }
+
+        const dx = player.x + player.size / 2 - turret.x;
+        const dy = player.y + player.size / 2 - turret.y;
+        turret.angle = Math.atan2(dy, dx);
+        if (now >= turret.readyAt && Math.hypot(dx, dy) <= (stage.turretRange ?? turretRange)) {
+          turret.fireAt = now + (stage.turretWindup ?? turretWindupDuration);
+        }
+      }
+    }
+
+    function launchProjectile(x, y, angle, speed, source, volleyId = null) {
+      projectiles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, source, volleyId });
+    }
+
+    function updateProjectiles(seconds) {
+      projectiles = projectiles.filter((projectile) => {
+        if (health === 0) return false;
+        projectile.x += projectile.vx * seconds;
+        projectile.y += projectile.vy * seconds;
+
+        const nearestX = Math.max(player.x, Math.min(projectile.x, player.x + player.size));
+        const nearestY = Math.max(player.y, Math.min(projectile.y, player.y + player.size));
+        if (Math.hypot(projectile.x - nearestX, projectile.y - nearestY) <= projectileRadius) {
+          if (projectile.volleyId === null || projectile.volleyId !== lastSpreadHit) {
+            if (projectile.volleyId !== null) lastSpreadHit = projectile.volleyId;
+            damagePlayer(projectile);
+          }
+          return false;
+        }
+
+        return projectile.x - projectileRadius > wall && projectile.x + projectileRadius < canvas.width - wall &&
+          projectile.y - projectileRadius > wall && projectile.y + projectileRadius < canvas.height - wall;
+      });
+    }
+
+    function isTouchingMonster() {
+      if (!monster.alive) return false;
+      return player.x <= monster.x + monster.size &&
+        player.x + player.size >= monster.x &&
+        player.y <= monster.y + monster.size &&
+        player.y + player.size >= monster.y;
+    }
+
+    function updateHealth() {
+      const touchingMonster = isTouchingMonster();
+      const newContact = touchingMonster && !wasTouchingMonster;
+      wasTouchingMonster = touchingMonster;
+
+      if (newContact) damagePlayer();
+    }
+
+    function damagePlayer(projectile) {
+      if (health === 0) return;
+
+      health -= 1;
+      if (health === 0) {
+        lives -= 1;
+        updateLivesStatus();
+      }
+      healthSlots[health].classList.add('is-empty');
+      healthBar.setAttribute('aria-valuenow', health);
+      showHitEffect(player);
+      knockPlayerBack(projectile);
+      wasTouchingMonster = isTouchingMonster();
+    }
+
+    function knockPlayerBack(projectile) {
+      let dx = projectile ? projectile.vx : (player.x + player.size / 2) - (monster.x + monster.size / 2);
+      const dy = projectile ? projectile.vy : (player.y + player.size / 2) - (monster.y + monster.size / 2);
+
+      // 중심이 정확히 겹치면 오른쪽으로 밀려납니다.
+      if (dx === 0 && dy === 0) dx = 1;
+      const distance = Math.hypot(dx, dy);
+      player.x += (dx / distance) * knockbackDistance;
+      player.y += (dy / distance) * knockbackDistance;
+      keepPlayerInsideRoom();
+    }
+
+    function showHitEffect(target) {
+      const startedAt = performance.now();
+      target.flashUntil = startedAt + hitFlashDuration;
+
+      // 충돌한 자리에서 픽셀 조각이 퍼집니다.
+      const particles = Array.from({ length: 9 }, (_, index) => {
+        const angle = index * (Math.PI * 2 / 9);
+        const speed = 65 + Math.random() * 100;
+        return {
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          size: 3 + Math.floor(Math.random() * 4),
+          color: index % 2 === 0 ? '#ff596a' : '#ffb0a3'
+        };
+      });
+
+      hitEffects.push({
+        x: target.x + target.size / 2,
+        y: target.y + target.size / 2,
+        startedAt,
+        particles
+      });
+    }
+
+    function drawHitEffects(now) {
+      hitEffects = hitEffects.filter((effect) => now - effect.startedAt < hitEffectDuration);
+
+      ctx.save();
+      for (const effect of hitEffects) {
+        const elapsed = now - effect.startedAt;
+        const seconds = elapsed / 1000;
+        ctx.globalAlpha = 1 - elapsed / hitEffectDuration;
+
+        for (const particle of effect.particles) {
+          ctx.fillStyle = particle.color;
+          ctx.fillRect(
+            effect.x + particle.vx * seconds,
+            effect.y + particle.vy * seconds,
+            particle.size,
+            particle.size
+          );
+        }
+      }
+      ctx.restore();
+    }
+
+    function drawMonsterAttack(now) {
+      if (!monster.alive || !monsterAttack || now >= monsterAttack.endsAt) return;
+      if (health === 0 && !monsterAttack.hasSwung) return;
+
+      const x = monster.x + monster.size / 2;
+      const y = monster.y + monster.size / 2;
+      const swinging = monsterAttack.hasSwung;
+
+      if (monsterAttack.type === 'ranged' || monsterAttack.type === 'spread') {
+        if (!swinging && monsterAttack.type === 'spread') {
+          for (const offset of bossSpreadOffsets) drawAimLine(x, y, monsterAttack.angle + offset, '#77ead5');
+        } else if (!swinging) {
+          drawAimLine(x, y, monsterAttack.angle, '#6de8ff');
+        }
+        return;
+      }
+
+      const startAngle = monsterAttack.angle - monsterAttackHalfAngle;
+      const endAngle = monsterAttack.angle + monsterAttackHalfAngle;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(wall, wall, canvas.width - wall * 2, canvas.height - wall * 2);
+      ctx.clip();
+
+      if (monsterAttack.type === 'slam') {
+        ctx.beginPath();
+        ctx.arc(x, y, bossSlamRange, 0, Math.PI * 2);
+        ctx.fillStyle = swinging ? 'rgba(255, 108, 96, 0.48)' : 'rgba(255, 170, 115, 0.18)';
+        ctx.strokeStyle = swinging ? '#ffb4a3' : '#ffaa73';
+        ctx.lineWidth = swinging ? 5 : 2;
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+        return;
+      }
+
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.arc(x, y, monsterAttackRange, startAngle, endAngle);
+      ctx.closePath();
+      ctx.fillStyle = swinging ? 'rgba(255, 89, 106, 0.46)' : 'rgba(255, 199, 108, 0.18)';
+      ctx.strokeStyle = swinging ? '#ff8893' : '#ffc76c';
+      ctx.lineWidth = 2;
+      ctx.fill();
+      ctx.stroke();
+
+      if (swinging) {
+        const progress = (now - monsterAttack.strikeAt) / monsterSwingDuration;
+        const sweepAngle = startAngle + (endAngle - startAngle) * progress;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + Math.cos(sweepAngle) * monsterAttackRange,
+          y + Math.sin(sweepAngle) * monsterAttackRange);
+        ctx.strokeStyle = '#ffe3d7';
+        ctx.lineWidth = 5;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function drawAimLine(x, y, angle, color) {
+      const length = Math.hypot(canvas.width, canvas.height);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(wall, wall, canvas.width - wall * 2, canvas.height - wall * 2);
+      ctx.clip();
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(angle) * length, y + Math.sin(angle) * length);
+      ctx.setLineDash([6, 5]);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawTurrets() {
+      for (const turret of turrets) {
+        const aiming = turret.fireAt !== null && monster.alive && health > 0;
+        if (aiming) drawAimLine(turret.x, turret.y, turret.angle, '#d19bff');
+
+        ctx.fillStyle = '#526277';
+        ctx.fillRect(turret.x - 14, turret.y - 14, 28, 28);
+        ctx.fillStyle = '#182638';
+        ctx.fillRect(turret.x - 10, turret.y - 10, 20, 20);
+
+        ctx.save();
+        ctx.translate(turret.x, turret.y);
+        ctx.rotate(turret.angle);
+        ctx.fillStyle = aiming ? '#e4c2ff' : '#9e80ca';
+        ctx.fillRect(0, -4, 19, 8);
+        ctx.fillRect(-5, -5, 10, 10);
+        ctx.restore();
+      }
+    }
+
+    function drawProjectiles() {
+      if (!monster.alive || health === 0) return;
+
+      for (const projectile of projectiles) {
+        ctx.beginPath();
+        ctx.arc(projectile.x, projectile.y, projectileRadius, 0, Math.PI * 2);
+        ctx.fillStyle = projectile.source === 'turret' ? '#d19bff' :
+          projectile.volleyId !== null ? '#77ead5' : '#6de8ff';
+        ctx.fill();
+      }
+    }
+
+    function drawMonsterHealth() {
+      const slotWidth = 13;
+      const gap = 2;
+      const barWidth = monsterHealthSlots * (slotWidth + gap) - gap;
+      const centeredX = monster.x + (monster.size - barWidth) / 2;
+      const startX = Math.max(wall, Math.min(centeredX, canvas.width - wall - barWidth));
+      const barY = monster.y < wall + 24 ? monster.y + monster.size + 15 : monster.y - 12;
+
+      ctx.fillStyle = '#182638';
+      ctx.fillRect(startX - 2, barY - 2, barWidth + 4, 13);
+
+      for (let i = 0; i < monsterHealthSlots; i++) {
+        const x = startX + i * (slotWidth + gap);
+        const layer = Math.max(0, Math.ceil((monster.hp - i) / monsterHealthSlots));
+        ctx.fillStyle = monsterHealthColors[layer === 0 ? 0 : 1];
+        ctx.fillRect(x, barY, slotWidth, 9);
+        if (layer > 1) {
+          ctx.fillStyle = monsterHealthColors[layer];
+          ctx.fillRect(x, barY, slotWidth, 7);
+        }
+      }
+
+      ctx.fillStyle = '#f0f4f8';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(`${monster.hp} / ${stages[stageIndex].hp}`, startX + barWidth / 2, barY - 3);
+    }
+
+    function draw(now) {
+      const bossRoom = stages[stageIndex].boss;
+      ctx.fillStyle = bossRoom ? '#634665' : '#415466';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = bossRoom ? '#2c203a' : '#253645';
+      ctx.fillRect(wall, wall, canvas.width - wall * 2, canvas.height - wall * 2);
+      if (bossRoom) drawBossRoomFloor();
+
+      drawMonsterAttack(now);
+      drawTurrets();
+
+      ctx.fillStyle = now < player.flashUntil ? '#fff4e4' : '#ffcb75';
+      ctx.fillRect(player.x, player.y, player.size, player.size);
+      ctx.fillStyle = '#253645';
+      ctx.fillRect(player.x + 8, player.y + 9, 4, 5);
+      ctx.fillRect(player.x + 20, player.y + 9, 4, 5);
+
+      const monsterIsFlashing = now < monster.flashUntil;
+      if (monster.alive || monsterIsFlashing) {
+        const guarding = now < boss.guardUntil;
+        const recovering = monsterAttack && now >= monsterAttack.endsAt && now < monsterAttack.recoveryEndsAt;
+        const monsterColor = recovering ? '#e5a2ff' : '#ff7373';
+        ctx.fillStyle = monsterIsFlashing ? '#fff4e4' : monsterColor;
+        const crouch = guarding ? 10 : 0;
+        ctx.fillRect(monster.x, monster.y + crouch, monster.size, monster.size - crouch);
+        if (guarding || now < boss.blockUntil) drawBossGuard(now, guarding);
+        drawMonsterHealth();
+      }
+
+      if (attackEffect && now < attackEffect.until) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(attackEffect.x, attackEffect.y);
+        ctx.lineTo(attackEffect.endX, attackEffect.endY);
+        ctx.stroke();
+      }
+
+      drawProjectiles();
+      drawHitEffects(now);
+    }
+
+    function drawBossRoomFloor() {
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      ctx.strokeStyle = '#6e505d';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(wall + 9, wall + 9, canvas.width - (wall + 9) * 2, canvas.height - (wall + 9) * 2);
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 104, 0, Math.PI * 2);
+      ctx.moveTo(centerX + 89, centerY);
+      ctx.arc(centerX, centerY, 89, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    function drawBossGuard(now, guarding) {
+      const x = monster.x + monster.size / 2;
+      const y = monster.y + monster.size / 2;
+      const blocked = now < boss.blockUntil;
+      if (guarding) {
+        ctx.beginPath();
+        ctx.arc(x, y + 5, 23, 0, Math.PI * 2);
+        ctx.strokeStyle = blocked ? '#e6fbff' : '#68d9ed';
+        ctx.lineWidth = blocked ? 5 : 3;
+        ctx.stroke();
+      }
+      if (blocked) {
+        ctx.fillStyle = '#e6fbff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText('BLOCK', x, monster.y + monster.size + 5);
+      }
+    }
+
+    function queueFrame() {
+      if (framePending) return;
+      framePending = true;
+      requestAnimationFrame(frame);
+    }
+
+    function frame(time) {
+      framePending = false;
+      const seconds = previousTime === null ? 0 : Math.min((time - previousTime) / 1000, 0.05);
+      previousTime = time;
+      const now = performance.now();
+      if (health > 0 && monster.alive) update(seconds, now);
+      updateAttackStatus(now);
+      draw(now);
+      const playerLost = health === 0;
+
+      if (playerLost || !monster.alive) {
+        let title = 'GAME OVER';
+        let restartHint = 'R 키로 다시 시작';
+        if (playerLost && lives > 0) {
+          title = 'TRY AGAIN';
+          restartHint = `Press Enter to retry · ${lives} ${lives === 1 ? 'life' : 'lives'} left`;
+        } else if (!playerLost) {
+          const finalStage = stageIndex === stages.length - 1;
+          title = finalStage ? 'ALL STAGES CLEAR' : 'VICTORY';
+          restartHint = finalStage ? 'Press R to restart' : 'Press Enter for the next stage';
+        }
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 48px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(title, canvas.width / 2, canvas.height / 2);
+
+        ctx.font = '18px sans-serif';
+        ctx.fillText(restartHint, canvas.width / 2, canvas.height / 2 + 42);
+
+        // 결과가 표시된 뒤에는 타격 효과가 사라질 때까지만 그립니다.
+        if (hitEffects.length === 0) return;
+      }
+      queueFrame();
+    }
+
+    startStage(0);
+  </script>
+</body>
+</html>
