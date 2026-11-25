@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>던전 방</title>
+<style>
+  body { margin: 0; background: #11151c; color: #e8edf5; font: 14px system-ui; }
+  main { box-sizing: border-box; max-width: 554px; margin: auto; padding: 16px; }
+  canvas { display: block; width: 100%; height: auto; border: 1px solid #536077;
+           box-sizing: border-box; }
+  canvas:focus-visible { outline: 2px solid #8adfbd; outline-offset: 3px; }
+  p { margin: 10px 0; }
+  button { min-width: 38px; min-height: 34px; margin-right: 4px; color: inherit;
+           background: #273347; border: 1px solid #536077; border-radius: 5px; }
+</style>
+<main>
+  <p id="instructions">방을 클릭한 뒤 방향키 또는 WASD로 이동하세요.</p>
+  <canvas tabindex="0" aria-label="던전 방"
+          aria-describedby="instructions"></canvas>
+  <p id="position" aria-live="polite"></p>
+  <div aria-label="이동 버튼">
+    <button data-key="ArrowLeft" aria-label="왼쪽">←</button>
+    <button data-key="ArrowUp" aria-label="위">↑</button>
+    <button data-key="ArrowDown" aria-label="아래">↓</button>
+    <button data-key="ArrowRight" aria-label="오른쪽">→</button>
+  </div>
+</main>
+<script>
+  // #은 벽이나 기둥, .은 바닥, S는 시작 위치입니다.
+  const room = [
+    "#############",
+    "#...........#",
+    "#...........#",
+    "#...........#",
+    "#.S.........#",
+    "#...........#",
+    "#...........#",
+    "#...........#",
+    "#...........#",
+    "#############",
+  ];
+  const canvas = document.querySelector("canvas");
+  const ctx = canvas.getContext("2d");
+  const position = document.querySelector("#position");
+  const tile = 40;
+  canvas.width = room[0].length * tile;
+  canvas.height = room.length * tile;
+  let row = room.findIndex(line => line.includes("S"));
+  let col = room[row].indexOf("S");
+  const moves = {
+    arrowleft: [0, -1], a: [0, -1],
+    arrowup: [-1, 0], w: [-1, 0],
+    arrowdown: [1, 0], s: [1, 0],
+    arrowright: [0, 1], d: [0, 1],
+  };
+
+  function draw() {
+    room.forEach((line, y) => {
+      [...line].forEach((cell, x) => {
+        const wall = cell === "#";
+        ctx.fillStyle = wall ? "#46546c" : "#222b38";
+        ctx.fillRect(x * tile, y * tile, tile, tile);
+        ctx.strokeStyle = wall ? "#5b6981" : "#303c4d";
+        ctx.strokeRect(x * tile + 0.5, y * tile + 0.5, tile - 1, tile - 1);
+      });
+    });
+    ctx.fillStyle = "#8adfbd";
+    ctx.beginPath();
+    ctx.arc((col + 0.5) * tile, (row + 0.5) * tile, 12, 0, Math.PI * 2);
+    ctx.fill();
+    position.textContent = "플레이어 위치 · 열 " + (col + 1) + ", 행 " + (row + 1);
+  }
+
+  function move([dy, dx]) {
+    const nextRow = row + dy;
+    const nextCol = col + dx;
+    const nextCell = room[nextRow]?.[nextCol];
+    if (nextCell === "." || nextCell === "S") {
+      row = nextRow;
+      col = nextCol;
+      draw();
+    }
+  }
+
+  canvas.addEventListener("click", () => canvas.focus());
+  canvas.addEventListener("keydown", event => {
+    const direction = moves[event.key.toLowerCase()];
+    if (!Array.isArray(direction) || event.ctrlKey || event.metaKey || event.altKey) return;
+    event.preventDefault();
+    move(direction);
+  });
+  document.querySelectorAll("button[data-key]").forEach(button => {
+    button.addEventListener("click", () => move(moves[button.dataset.key.toLowerCase()]));
+  });
+  draw();
+</script>
+</html>
