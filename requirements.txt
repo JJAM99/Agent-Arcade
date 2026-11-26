@@ -1,6 +1,0 @@
-# 노트북 분석을 시작하기 위한 기본 도구
-# 팀 환경을 확정하면 버전 및 잠금 파일 정책을 정해주세요.
-jupyterlab
-numpy
-pandas
-matplotlib
