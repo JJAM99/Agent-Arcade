@@ -81,8 +81,6 @@
         const wall = cell === "#";
         ctx.fillStyle = wall ? "#46546c" : "#222b38";
         ctx.fillRect(x * tile, y * tile, tile, tile);
-        ctx.strokeStyle = wall ? "#5b6981" : "#303c4d";
-        ctx.strokeRect(x * tile + 0.5, y * tile + 0.5, tile - 1, tile - 1);
       });
     });
     ctx.fillStyle = "#8adfbd";
