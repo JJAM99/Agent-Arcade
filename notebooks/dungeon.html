@@ -47,12 +47,33 @@
   canvas.height = room.length * tile;
   let row = room.findIndex(line => line.includes("S"));
   let col = room[row].indexOf("S");
+  const monster = {row: 4, col: 9,};
   const moves = {
     arrowleft: [0, -1], a: [0, -1],
     arrowup: [-1, 0], w: [-1, 0],
     arrowdown: [1, 0], s: [1, 0],
     arrowright: [0, 1], d: [0, 1],
   };
+
+  function moveMonster() {
+    const dy = row - monster.row;
+    const dx = col - monster.col;
+    const distance = Math.abs(dy) + Math.abs(dx);
+    if (distance > 4 || distance <= 1) return;
+
+    const directions = [[0, Math.sign(dx)],[Math.sign(dy), 0], ];
+
+    for (const [stepRow, stepCol] of directions) {
+      if (stepRow === 0 && stepCol === 0) continue;
+      const nextRow = monster.row + stepRow;
+      const nextCol =monster.col + stepCol;
+      const cell = room[nextRow]?.[nextCol];
+      if (cell !== "." && cell !== "S") continue;
+
+      monster.row = nextRow;
+      monster.col = nextCol;
+      return;}
+  }
 
   function draw() {
     room.forEach((line, y) => {
@@ -68,6 +89,10 @@
     ctx.beginPath();
     ctx.arc((col + 0.5) * tile, (row + 0.5) * tile, 12, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = "#ef4444";
+    ctx.beginPath();
+    ctx.arc((monster.col + 0.5) * tile, (monster.row + 0.5) * tile, 12, 0, Math.PI * 2);
+    ctx.fill();
     position.textContent = "플레이어 위치 · 열 " + (col + 1) + ", 행 " + (row + 1);
   }
 
@@ -78,6 +103,7 @@
     if (nextCell === "." || nextCell === "S") {
       row = nextRow;
       col = nextCol;
+      moveMonster();
       draw();
     }
   }
