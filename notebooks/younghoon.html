@@ -73,7 +73,7 @@
     }
 
     /* 기준 요소를 한 타일 크기로 맞추면 100%만큼 움직일 때 정확히 한 칸 이동합니다. */
-    .player-anchor {
+    .actor-anchor {
       position: absolute;
       top: var(--room-padding);
       left: var(--room-padding);
@@ -82,6 +82,10 @@
       border: 1px solid transparent;
       z-index: 1;
       pointer-events: none;
+    }
+
+    .player-anchor {
+      z-index: 2;
       will-change: transform;
     }
 
@@ -143,23 +147,97 @@
       background: #a2e7fa;
       content: "";
     }
+
+    .monster {
+      position: absolute;
+      inset: 5% 8%;
+    }
+
+    .monster::before,
+    .monster::after {
+      position: absolute;
+      top: 0;
+      width: 36%;
+      height: 45%;
+      background: #f0a093;
+      clip-path: polygon(0 0, 100% 68%, 20% 100%);
+      content: "";
+    }
+
+    .monster::before { left: 4%; }
+    .monster::after { right: 4%; transform: scaleX(-1); }
+
+    .monster-face {
+      position: absolute;
+      inset: 22% 0 0;
+      z-index: 1;
+      border: 1px solid #43182a;
+      border-radius: 48% 48% 40% 40%;
+      background: linear-gradient(#e27287, #a73a5b);
+      box-shadow: 0 2px #261c24;
+    }
+
+    .monster-eye {
+      position: absolute;
+      top: 27%;
+      width: 29%;
+      height: 27%;
+      border-radius: 32% 18% 60% 58%;
+      background: radial-gradient(ellipse at center, #451b29 0 26%, #ffe0a0 35%);
+    }
+
+    .monster-eye:first-child { left: 15%; transform: rotate(18deg); }
+    .monster-eye:nth-child(2) { right: 15%; transform: rotate(-18deg); }
+
+    .monster-mouth {
+      position: absolute;
+      inset: 59% 23% 12%;
+      border-radius: 30% 30% 55% 55%;
+      background: #401829;
+    }
+
+    .monster-mouth::before,
+    .monster-mouth::after {
+      position: absolute;
+      top: 0;
+      width: 27%;
+      height: 66%;
+      background: #fff4d4;
+      clip-path: polygon(0 0, 100% 0, 50% 100%);
+      content: "";
+    }
+
+    .monster-mouth::before { left: 14%; }
+    .monster-mouth::after { right: 14%; }
   </style>
 </head>
 <body>
   <main>
     <h1>잿빛 지하묘</h1>
-    <div id="room" class="room" role="img" aria-label="북쪽 중앙에 문이 있고, 보라색 후드를 쓴 모험가가 있는 돌 던전 방"></div>
+    <div id="room" class="room" role="img" aria-label="북쪽 중앙에 문이 있고, 모험가와 뿔 달린 작은 몬스터가 있는 돌 던전 방"></div>
     <p class="controls-hint">방향키로 이동하세요. 두 방향키를 함께 누르면 대각선으로 이동합니다.</p>
   </main>
 
   <template id="player-template">
-    <div class="player-anchor">
+    <div class="actor-anchor player-anchor">
       <div class="player">
         <div class="player-hood">
           <div class="player-face">
             <span class="player-eye"></span>
             <span class="player-eye"></span>
           </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template id="monster-template">
+    <div class="actor-anchor">
+      <div class="monster">
+        <div class="monster-face">
+          <span class="monster-eye"></span>
+          <span class="monster-eye"></span>
+          <span class="monster-mouth"></span>
         </div>
       </div>
     </div>
@@ -202,7 +280,7 @@
       return roomMap[y]?.[x] === '.';
     }
 
-    let playerPosition = { x: 6, y: 7 };
+    const playerPosition = { x: 6, y: 7 };
     if (!isFloor(playerPosition.x, playerPosition.y)) {
       throw new Error('캐릭터 시작 위치는 바닥 타일이어야 합니다.');
     }
@@ -212,6 +290,16 @@
     room.append(playerAnchor);
     renderPlayer();
 
+    const monsterPosition = { x: 8, y: 3 };
+    if (!isFloor(monsterPosition.x, monsterPosition.y)) {
+      throw new Error('몬스터 위치는 바닥 타일이어야 합니다.');
+    }
+
+    const monsterTemplate = document.getElementById('monster-template');
+    const monsterAnchor = monsterTemplate.content.firstElementChild.cloneNode(true);
+    renderActor(monsterAnchor, monsterPosition.x, monsterPosition.y);
+    room.append(monsterAnchor);
+
     const movementByKey = new Map([
       ['ArrowUp', { dx: 0, dy: -1 }],
       ['ArrowDown', { dx: 0, dy: 1 }],
@@ -220,15 +308,18 @@
     ]);
 
     const heldKeys = new Set();
-    const tileTravelTimeMs = 130;
+    const playerSpeed = 6.4; // 초당 타일 수
+    const movementResponseMs = 40;
+    const playerHalfSize = 0.28;
+    const wallGap = 0.0001;
     const maxFrameElapsedMs = 50;
+    const stopSpeed = 0.02;
+    const velocity = { x: 0, y: 0 };
     let queuedKey;
-    let step;
-    let distanceTraveled = 0;
     let previousFrameTime;
     let isAnimating = false;
 
-    function getNextStep() {
+    function getInputDirection() {
       const activeKeys = new Set(heldKeys);
       if (queuedKey) activeKeys.add(queuedKey);
       queuedKey = undefined;
@@ -240,67 +331,67 @@
         dx += movement.dx;
         dy += movement.dy;
       }
-      if (dx === 0 && dy === 0) return;
-
-      const { x, y } = playerPosition;
-      if (dx !== 0 && dy !== 0) {
-        const horizontalOpen = isFloor(x + dx, y);
-        const verticalOpen = isFloor(x, y + dy);
-        if (!horizontalOpen || !verticalOpen || !isFloor(x + dx, y + dy)) {
-          // 벽 모서리를 통과할 수 없으면 열린 축을 따라 이동합니다.
-          const preferred = movementByKey.get([...activeKeys].at(-1));
-          if (horizontalOpen && (!verticalOpen || preferred.dx !== 0)) {
-            dy = 0;
-          } else {
-            dx = 0;
-          }
-        }
-      }
-
-      const nextX = x + dx;
-      const nextY = y + dy;
-      if (!isFloor(nextX, nextY)) return;
-
-      return {
-        x: nextX,
-        y: nextY,
-        dx,
-        dy,
-        distance: Math.hypot(dx, dy),
-      };
+      const length = Math.hypot(dx, dy) || 1;
+      return { x: dx / length, y: dy / length };
     }
 
-    function renderPlayer(offsetX = 0, offsetY = 0) {
-      const screenX = (playerPosition.x + offsetX) * 100;
-      const screenY = (playerPosition.y + offsetY) * 100;
-      playerAnchor.style.transform = `translate3d(${screenX}%, ${screenY}%, 0)`;
-    }
+    function moveAlongAxis(axis, displacement) {
+      if (displacement === 0) return;
 
-    function animateMovement(frameTime) {
-      step ??= getNextStep();
-      // 프레임이 오래 지연된 뒤 한꺼번에 이동하는 거리를 제한합니다.
-      const elapsed = Math.max(0, Math.min(frameTime - previousFrameTime, maxFrameElapsedMs));
-      previousFrameTime = frameTime;
-      distanceTraveled += elapsed / tileTravelTimeMs;
+      const next = playerPosition[axis] + displacement;
+      const direction = Math.sign(displacement);
+      const otherAxis = axis === 'x' ? 'y' : 'x';
+      // 좌표 0은 첫 타일의 중심이므로, 타일 경계 기준으로 바꾸려면 0.5를 더합니다.
+      const frontTile = Math.floor(next + 0.5 + direction * playerHalfSize);
+      const crossCenter = playerPosition[otherAxis] + 0.5;
+      const crossStart = Math.floor(crossCenter - playerHalfSize);
+      const crossEnd = Math.floor(crossCenter + playerHalfSize);
+      const canMove = axis === 'x'
+        ? isFloor(frontTile, crossStart) && isFloor(frontTile, crossEnd)
+        : isFloor(crossStart, frontTile) && isFloor(crossEnd, frontTile);
 
-      // 한 프레임에 칸 경계를 넘어가도 남은 이동량을 다음 칸에 반영합니다.
-      while (step && distanceTraveled >= step.distance) {
-        playerPosition = { x: step.x, y: step.y };
-        distanceTraveled -= step.distance;
-        step = getNextStep();
-      }
-
-      if (!step) {
-        distanceTraveled = 0;
-        renderPlayer();
-        isAnimating = false;
+      if (canMove) {
+        playerPosition[axis] = next;
         return;
       }
 
-      // 대각선은 더 긴 거리만큼 시간을 써서 직선 이동과 같은 속도를 유지합니다.
-      const progress = distanceTraveled / step.distance;
-      renderPlayer(step.dx * progress, step.dy * progress);
-      requestAnimationFrame(animateMovement);
+      // 막힌 축만 벽 경계에 맞춰 멈추면, 열린 축으로 벽을 따라 이동할 수 있습니다.
+      const wallEdge = direction > 0 ? frontTile : frontTile + 1;
+      playerPosition[axis] = wallEdge - 0.5 - direction * (playerHalfSize + wallGap);
+      velocity[axis] = 0;
+    }
+
+    function renderActor(anchor, x, y) {
+      anchor.style.transform = `translate3d(${x * 100}%, ${y * 100}%, 0)`;
+    }
+
+    function renderPlayer() {
+      renderActor(playerAnchor, playerPosition.x, playerPosition.y);
+    }
+
+    function animateMovement(frameTime) {
+      // 프레임이 오래 지연된 뒤 한꺼번에 이동하는 거리를 제한합니다.
+      const elapsed = Math.max(0, Math.min(frameTime - previousFrameTime, maxFrameElapsedMs));
+      previousFrameTime = frameTime;
+      if (elapsed === 0) {
+        requestAnimationFrame(animateMovement);
+        return;
+      }
+
+      const direction = getInputDirection();
+      const response = 1 - Math.exp(-elapsed / movementResponseMs);
+      const seconds = elapsed / 1000;
+      for (const axis of ['x', 'y']) {
+        const targetSpeed = direction[axis] * playerSpeed;
+        const previousSpeed = velocity[axis];
+        velocity[axis] += (targetSpeed - previousSpeed) * response;
+        if (targetSpeed === 0 && Math.abs(velocity[axis]) < stopSpeed) velocity[axis] = 0;
+        moveAlongAxis(axis, (previousSpeed + velocity[axis]) * seconds / 2);
+      }
+
+      renderPlayer();
+      isAnimating = direction.x !== 0 || direction.y !== 0 || velocity.x !== 0 || velocity.y !== 0;
+      if (isAnimating) requestAnimationFrame(animateMovement);
     }
 
     function startMovement() {
@@ -319,18 +410,20 @@
       if (event.repeat) return;
 
       heldKeys.add(event.key);
-      // 이동 중에 짧게 누른 방향도 다음 칸부터 한 번 반영합니다.
+      // 화면을 그리기 전에 키를 떼도 짧은 입력을 한 번 반영합니다.
       queuedKey = event.key;
       startMovement();
     });
 
     document.addEventListener('keyup', (event) => {
-      if (heldKeys.delete(event.key)) startMovement();
+      heldKeys.delete(event.key);
     });
 
     window.addEventListener('blur', () => {
       heldKeys.clear();
       queuedKey = undefined;
+      velocity.x = 0;
+      velocity.y = 0;
     });
   </script>
 </body>
