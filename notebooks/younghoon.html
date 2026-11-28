@@ -28,6 +28,23 @@
 
     .controls-hint { margin: .75rem 0 0; color: #b8c0b5; }
 
+    .experience-slots {
+      display: grid;
+      grid-template-columns: repeat(10, 1fr);
+      gap: .25rem;
+      max-width: 20rem;
+      margin-top: .3rem;
+    }
+
+    .experience-slot {
+      height: .65rem;
+      border: 1px solid #52606a;
+      border-radius: .15rem;
+      background: #202a32;
+    }
+
+    .experience-slot.is-filled { background: #61bcff; }
+
     /* 지도에서 정한 열 수에 맞춰 정사각형 타일을 위에서 아래로 배치합니다. */
     .room {
       --room-padding: .375rem;
@@ -214,6 +231,15 @@
 
     .attack-effect { z-index: 3; }
 
+    .experience-orb::before {
+      position: absolute;
+      inset: 32%;
+      border-radius: 50%;
+      background: radial-gradient(circle at 36% 30%, #e3faff, #57beff 48%, #1e52b7);
+      box-shadow: 0 0 .55rem #3caaff;
+      content: "";
+    }
+
     .attack-warning {
       position: absolute;
       top: 50%;
@@ -269,6 +295,8 @@
     <div id="room" class="room" role="img" aria-label="북쪽 중앙에 문이 있고, 모험가와 뿔 달린 작은 몬스터가 있는 돌 던전 방"></div>
     <p class="controls-hint">WASD로 이동하고, 던전 안을 왼쪽 클릭해 공격하세요. 연속으로 클릭하면 베기, 반대 베기, 찌르기가 이어집니다. 주황색 공격 범위는 옆으로 피할 수 있습니다.</p>
     <p class="controls-hint" role="status">플레이어 체력 <span id="health">6 / 6</span> · 몬스터 체력 <span id="monster-health">100 / 100</span> · <span id="monster-state">정찰</span></p>
+    <p class="controls-hint" role="status">경험치 <span id="experience-count">0 / 10</span></p>
+    <div id="experience-slots" class="experience-slots" aria-hidden="true"></div>
   </main>
 
   <template id="player-template">
@@ -385,6 +413,10 @@
     const knockbackDurationMs = 200;
     const maxHealth = 6;
     const monsterMaxHealth = 100;
+    const experienceCapacity = 10;
+    const orbPickupRange = 0.36;
+    const orbMagnetDelayMs = 250;
+    const orbMagnetSpeed = 7;
     const playerAttackDamage = 20;
     const playerAttackRange = 1.5;
     const comboWindowMs = 700;
@@ -392,9 +424,18 @@
     const healthStatus = document.getElementById('health');
     const monsterHealthStatus = document.getElementById('monster-health');
     const monsterStatus = document.getElementById('monster-state');
+    const experienceCount = document.getElementById('experience-count');
+    const experienceSlots = document.getElementById('experience-slots');
+    for (let index = 0; index < experienceCapacity; index += 1) {
+      const slot = document.createElement('span');
+      slot.classList.add('experience-slot');
+      experienceSlots.append(slot);
+    }
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     let health = maxHealth;
     let monsterHealth = monsterMaxHealth;
+    let experience = 0;
+    let experienceOrb;
     let monsterState = 'scout';
     let patrolIndex = 0;
     let monsterWaypoint;
@@ -751,13 +792,50 @@
         monsterKnockback = updateKnockback(monsterPosition, monsterKnockback, elapsed);
         renderActor(monsterAnchor, monsterPosition.x, monsterPosition.y);
         if (!monsterKnockback) {
-          if (monsterHealth === 0) monsterAnchor.hidden = true;
+          if (monsterHealth === 0) {
+            monsterAnchor.hidden = true;
+            dropExperienceOrb();
+          }
           else monsterStatus.textContent = monsterStates[monsterState];
         }
       } else if (health > 0 && monsterHealth > 0) {
         updateMonster(elapsed);
       }
+      if (health > 0 && experienceOrb) updateExperienceOrb(elapsed);
       if (health > 0 || knockback || monsterKnockback) requestAnimationFrame(animateGame);
+    }
+
+    function dropExperienceOrb() {
+      const anchor = document.createElement('div');
+      anchor.classList.add('actor-anchor', 'experience-orb');
+      room.append(anchor);
+      experienceOrb = { ...monsterPosition, anchor, ageMs: 0 };
+      renderActor(anchor, experienceOrb.x, experienceOrb.y);
+    }
+
+    function updateExperienceOrb(elapsed) {
+      const orb = experienceOrb;
+      const dx = playerPosition.x - orb.x;
+      const dy = playerPosition.y - orb.y;
+      const distance = Math.hypot(dx, dy);
+      orb.ageMs += elapsed;
+
+      const pull = monsterHealth === 0 && orb.ageMs >= orbMagnetDelayMs
+        ? orbMagnetSpeed * elapsed / 1000 : 0;
+      if (distance <= orbPickupRange + pull) {
+        experience = Math.min(experience + 1, experienceCapacity);
+        experienceCount.textContent = `${experience} / ${experienceCapacity}`;
+        experienceSlots.children[experience - 1].classList.add('is-filled');
+        orb.anchor.remove();
+        experienceOrb = undefined;
+        return;
+      }
+
+      if (pull > 0) {
+        orb.x += dx / distance * pull;
+        orb.y += dy / distance * pull;
+        renderActor(orb.anchor, orb.x, orb.y);
+      }
     }
 
     room.addEventListener('click', attackAtPointer);
