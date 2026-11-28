@@ -210,6 +210,8 @@
     .monster-mouth::before { left: 14%; }
     .monster-mouth::after { right: 14%; }
 
+    .room { cursor: crosshair; }
+
     .attack-effect { z-index: 3; }
 
     .attack-warning {
@@ -244,6 +246,10 @@
       content: "";
     }
 
+    .attack-swipe.is-thrust::before {
+      clip-path: polygon(0 46%, 71% 40%, 71% 29%, 100% 50%, 71% 71%, 71% 60%, 0 54%);
+    }
+
     .attack-swipe::before {
       inset: 0;
       background: linear-gradient(90deg, #f58a3d, #ffdc80 55%, #fff9da 76%, #ffbd5d);
@@ -261,8 +267,8 @@
   <main>
     <h1>잿빛 지하묘</h1>
     <div id="room" class="room" role="img" aria-label="북쪽 중앙에 문이 있고, 모험가와 뿔 달린 작은 몬스터가 있는 돌 던전 방"></div>
-    <p class="controls-hint">방향키로 이동하세요. 두 방향키를 함께 누르면 대각선으로 이동합니다. 주황색 공격 범위는 옆으로 피할 수 있습니다.</p>
-    <p class="controls-hint" role="status">체력 <span id="health">6 / 6</span> · 몬스터 <span id="monster-state">정찰</span></p>
+    <p class="controls-hint">WASD로 이동하고, 던전 안을 왼쪽 클릭해 공격하세요. 연속으로 클릭하면 베기, 반대 베기, 찌르기가 이어집니다. 주황색 공격 범위는 옆으로 피할 수 있습니다.</p>
+    <p class="controls-hint" role="status">플레이어 체력 <span id="health">6 / 6</span> · 몬스터 체력 <span id="monster-health">100 / 100</span> · <span id="monster-state">정찰</span></p>
   </main>
 
   <template id="player-template">
@@ -360,6 +366,11 @@
     attackEffect.append(attackWarning, attackSwipe);
     room.append(attackEffect);
 
+    const playerAttackEffect = attackEffect.cloneNode(false);
+    const playerAttackSwipe = attackSwipe.cloneNode(false);
+    playerAttackEffect.append(playerAttackSwipe);
+    room.append(playerAttackEffect);
+
     const monsterStates = { scout: '정찰', chase: '추적', attack: '공격' };
     const patrolRoute = [{ x: 10, y: 3 }, { x: 10, y: 6 }, { x: 7, y: 6 }, { x: 7, y: 3 }];
     const scoutSpeed = 1.5;
@@ -373,22 +384,33 @@
     const knockbackDistance = 0.9;
     const knockbackDurationMs = 200;
     const maxHealth = 6;
+    const monsterMaxHealth = 100;
+    const playerAttackDamage = 20;
+    const playerAttackRange = 1.5;
+    const comboWindowMs = 700;
+    const playerAttackCooldownMs = 300;
     const healthStatus = document.getElementById('health');
+    const monsterHealthStatus = document.getElementById('monster-health');
     const monsterStatus = document.getElementById('monster-state');
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     let health = maxHealth;
+    let monsterHealth = monsterMaxHealth;
     let monsterState = 'scout';
     let patrolIndex = 0;
     let monsterWaypoint;
     let attackCooldownMs = 0;
     let pendingAttack;
     let knockback;
+    let monsterKnockback;
+    let comboStep = 0;
+    let lastPlayerAttackAt = -Infinity;
+    let playerAttackAnimations = [];
 
     const movementByKey = new Map([
-      ['ArrowUp', { dx: 0, dy: -1 }],
-      ['ArrowDown', { dx: 0, dy: 1 }],
-      ['ArrowLeft', { dx: -1, dy: 0 }],
-      ['ArrowRight', { dx: 1, dy: 0 }],
+      ['w', { dx: 0, dy: -1 }],
+      ['s', { dx: 0, dy: 1 }],
+      ['a', { dx: -1, dy: 0 }],
+      ['d', { dx: 1, dy: 0 }],
     ]);
 
     const heldKeys = new Set();
@@ -520,7 +542,28 @@
       monsterStatus.textContent = '공격 준비';
     }
 
-    function playAttackMotion(dx, dy) {
+    function playPlayerAttackMotion(dx, dy, combo) {
+      const aim = Math.atan2(dy, dx);
+      const angle = `rotate(${aim}rad)`;
+      const thrust = combo === 3;
+      const sweep = reducedMotion.matches || thrust ? 0 : (combo === 1 ? 0.85 : -0.85);
+      const swipeAnimation = playerAttackSwipe.animate([
+        { transform: `rotate(${aim - sweep}rad) scale(${reducedMotion.matches || thrust ? 1 : 0.8})`, opacity: 0 },
+        { transform: angle, opacity: 1, offset: 0.18 },
+        { transform: `rotate(${aim + sweep}rad)`, opacity: 1, offset: 0.55 },
+        { transform: `rotate(${aim + sweep}rad)`, opacity: 0 },
+      ], { duration: 400, easing: 'ease-out' });
+
+      const rest = { transform: 'none', filter: 'brightness(1)' };
+      const strike = {
+        offset: 0.24,
+        transform: reducedMotion.matches ? 'none' : `translate(${dx * (thrust ? 68 : 50)}%, ${dy * (thrust ? 68 : 50)}%) scale(1.12)`,
+        filter: 'brightness(1.34)',
+      };
+      return [swipeAnimation, playerSprite.animate([rest, strike, rest], { duration: 260, easing: 'ease-out' })];
+    }
+
+    function playMonsterAttackMotion(dx, dy) {
       const angle = `rotate(${Math.atan2(dy, dx)}rad)`;
       attackSwipe.animate([
         { transform: `${angle} scale(${reducedMotion.matches ? 1 : 0.8})`, opacity: 0 },
@@ -538,11 +581,7 @@
       monsterSprite.animate([rest, strike, rest], { duration: 260, easing: 'ease-out' });
     }
 
-    function hitPlayer(dx, dy) {
-      knockback = { dx, dy, elapsed: 0 };
-      velocity.x = 0;
-      velocity.y = 0;
-
+    function playHitMotion(sprite) {
       const rest = { transform: 'none', filter: 'brightness(1)' };
       const flinch = {
         offset: 0.24,
@@ -550,8 +589,14 @@
         filter: 'brightness(1.55)',
       };
 
-      playerSprite.animate([rest, flinch, rest], { duration: 260, easing: 'ease-out' });
+      sprite.animate([rest, flinch, rest], { duration: 260, easing: 'ease-out' });
+    }
 
+    function hitPlayer(dx, dy) {
+      knockback = { dx, dy, elapsed: 0 };
+      velocity.x = 0;
+      velocity.y = 0;
+      playHitMotion(playerSprite);
       health -= 1;
       healthStatus.textContent = `${health} / ${maxHealth}`;
       if (health === 0) monsterStatus.textContent = '승리 · 새로고침으로 다시 시작';
@@ -570,7 +615,7 @@
       pendingAttack = undefined;
       attackWarning.hidden = true;
       monsterSprite.classList.remove('is-winding-up');
-      playAttackMotion(dx, dy);
+      playMonsterAttackMotion(dx, dy);
 
       // 조준 방향은 예고 때 고정하고, 타격 순간의 플레이어 위치만 검사합니다.
       const offsetX = playerPosition.x - monsterPosition.x;
@@ -582,23 +627,76 @@
       if (hit) hitPlayer(dx, dy);
     }
 
-    function updateKnockback(elapsed) {
-      const remainingBefore = 1 - knockback.elapsed / knockbackDurationMs;
-      knockback.elapsed = Math.min(knockback.elapsed + elapsed, knockbackDurationMs);
-      const remainingAfter = 1 - knockback.elapsed / knockbackDurationMs;
+    function updateKnockback(position, push, elapsed) {
+      const remainingBefore = 1 - push.elapsed / knockbackDurationMs;
+      push.elapsed = Math.min(push.elapsed + elapsed, knockbackDurationMs);
+      const remainingAfter = 1 - push.elapsed / knockbackDurationMs;
       // 처음에 멀리 밀리고, 시간이 갈수록 프레임당 이동 거리가 줄어듭니다.
       const distance = knockbackDistance * (remainingBefore ** 2 - remainingAfter ** 2);
-      if (!moveAlongAxis(playerPosition, 'x', knockback.dx * distance)) knockback.dx = 0;
-      if (!moveAlongAxis(playerPosition, 'y', knockback.dy * distance)) knockback.dy = 0;
-      if (remainingAfter === 0 || (knockback.dx === 0 && knockback.dy === 0)) knockback = undefined;
+      if (!moveAlongAxis(position, 'x', push.dx * distance)) push.dx = 0;
+      if (!moveAlongAxis(position, 'y', push.dy * distance)) push.dy = 0;
+      const finished = remainingAfter === 0 || (push.dx === 0 && push.dy === 0);
+      return finished ? undefined : push;
+    }
+
+    function hasOpenAttackPath() {
+      const playerTile = tileOf(playerPosition);
+      const monsterTile = tileOf(monsterPosition);
+      return isFloor(playerTile.x, monsterTile.y) && isFloor(monsterTile.x, playerTile.y);
+    }
+
+    function resetExpiredCombo(now) {
+      if (comboStep !== 0 && now - lastPlayerAttackAt > comboWindowMs) comboStep = 0;
+    }
+
+    function attackAtPointer(event) {
+      if (event.button !== 0 || health === 0) return;
+      const now = performance.now();
+      if (now - lastPlayerAttackAt < playerAttackCooldownMs) return;
+
+      resetExpiredCombo(now);
+      comboStep = comboStep % 3 + 1;
+      lastPlayerAttackAt = now;
+
+      const bounds = playerAnchor.getBoundingClientRect();
+      const aimX = event.clientX - (bounds.left + bounds.width / 2);
+      const aimY = event.clientY - (bounds.top + bounds.height / 2);
+      const aimLength = Math.hypot(aimX, aimY);
+      const dx = aimLength === 0 ? 0 : aimX / aimLength;
+      const dy = aimLength === 0 ? 1 : aimY / aimLength;
+
+      for (const animation of playerAttackAnimations) animation.cancel();
+      playerAttackSwipe.classList.toggle('is-thrust', comboStep === 3);
+      renderActor(playerAttackEffect, playerPosition.x + dx * playerAttackRange / 2,
+        playerPosition.y + dy * playerAttackRange / 2);
+      playerAttackAnimations = playPlayerAttackMotion(dx, dy, comboStep);
+
+      if (monsterHealth === 0) return;
+      const offsetX = monsterPosition.x - playerPosition.x;
+      const offsetY = monsterPosition.y - playerPosition.y;
+      const distance = Math.hypot(offsetX, offsetY);
+      if (distance > playerAttackRange || !hasOpenAttackPath()) return;
+      const forward = offsetX * dx + offsetY * dy;
+      const sideways = offsetY * dx - offsetX * dy;
+      const halfWidth = comboStep === 3 ? 0.32 : 0.8;
+      if (forward < 0 || Math.abs(sideways) > halfWidth) return;
+
+      playHitMotion(monsterSprite);
+      monsterKnockback = { dx: distance === 0 ? dx : offsetX / distance,
+        dy: distance === 0 ? dy : offsetY / distance, elapsed: 0 };
+      monsterWaypoint = undefined;
+      pendingAttack = undefined;
+      attackWarning.hidden = true;
+      monsterSprite.classList.remove('is-winding-up');
+      monsterHealth = Math.max(0, monsterHealth - playerAttackDamage);
+      monsterHealthStatus.textContent = `${monsterHealth} / ${monsterMaxHealth}`;
+      monsterStatus.textContent = monsterHealth === 0 ? '몬스터 처치' : '피격';
     }
 
     function updateMonster(elapsed) {
       attackCooldownMs = Math.max(0, attackCooldownMs - elapsed);
       const distance = Math.hypot(playerPosition.x - monsterPosition.x, playerPosition.y - monsterPosition.y);
-      const playerTile = tileOf(playerPosition);
-      const monsterTile = tileOf(monsterPosition);
-      const hasOpenAttack = isFloor(playerTile.x, monsterTile.y) && isFloor(monsterTile.x, playerTile.y);
+      const hasOpenAttack = hasOpenAttackPath();
       const nextState = getMonsterState(distance, hasOpenAttack);
       if (nextState !== monsterState) {
         monsterState = nextState;
@@ -637,6 +735,7 @@
     }
 
     function animateGame(frameTime) {
+      resetExpiredCombo(frameTime);
       // 프레임이 오래 지연된 뒤 한꺼번에 이동하는 거리를 제한합니다.
       const elapsed = Math.max(0, Math.min(frameTime - previousFrameTime, maxFrameElapsedMs));
       previousFrameTime = frameTime;
@@ -645,27 +744,39 @@
         return;
       }
 
-      if (knockback) updateKnockback(elapsed);
+      if (knockback) knockback = updateKnockback(playerPosition, knockback, elapsed);
       else if (health > 0) updatePlayerMovement(elapsed);
       renderPlayer();
-      if (health > 0) updateMonster(elapsed);
-      if (health > 0 || knockback) requestAnimationFrame(animateGame);
+      if (monsterKnockback) {
+        monsterKnockback = updateKnockback(monsterPosition, monsterKnockback, elapsed);
+        renderActor(monsterAnchor, monsterPosition.x, monsterPosition.y);
+        if (!monsterKnockback) {
+          if (monsterHealth === 0) monsterAnchor.hidden = true;
+          else monsterStatus.textContent = monsterStates[monsterState];
+        }
+      } else if (health > 0 && monsterHealth > 0) {
+        updateMonster(elapsed);
+      }
+      if (health > 0 || knockback || monsterKnockback) requestAnimationFrame(animateGame);
     }
+
+    room.addEventListener('click', attackAtPointer);
 
     document.addEventListener('keydown', (event) => {
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (!movementByKey.has(event.key)) return;
+      const key = event.key.toLowerCase();
+      if (!movementByKey.has(key)) return;
 
       event.preventDefault();
       if (event.repeat) return;
 
-      heldKeys.add(event.key);
+      heldKeys.add(key);
       // 화면을 그리기 전에 키를 떼도 짧은 입력을 한 번 반영합니다.
-      queuedKey = event.key;
+      queuedKey = key;
     });
 
     document.addEventListener('keyup', (event) => {
-      heldKeys.delete(event.key);
+      heldKeys.delete(event.key.toLowerCase());
     });
 
     window.addEventListener('blur', () => {
