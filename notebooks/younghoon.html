@@ -39,6 +39,7 @@
     .tile { aspect-ratio: 1; }
 
     .floor {
+      position: relative;
       border: 1px solid #26302a;
       background: #333f36;
     }
@@ -67,13 +68,84 @@
       background: #eac485;
       content: "";
     }
+
+    /* 타일을 기준으로 배치해 화면이 작아져도 캐릭터가 같은 칸에 머뭅니다. */
+    .player {
+      position: absolute;
+      inset: 5%;
+    }
+
+    .player::before {
+      position: absolute;
+      inset: 55% 22% 0;
+      border: 1px solid #302340;
+      border-radius: 45% 45% 25% 25%;
+      background: #8060b1;
+      box-shadow: 0 2px #202722;
+      content: "";
+    }
+
+    .player-hood {
+      position: absolute;
+      inset: 0 12% 24%;
+      border: 1px solid #302340;
+      border-radius: 50% 50% 42% 42%;
+      background: #a688df;
+    }
+
+    .player-face {
+      position: absolute;
+      inset: 21% 12% 10%;
+      border-radius: 46%;
+      background: #ffdea8;
+    }
+
+    .player-eye {
+      position: absolute;
+      top: 24%;
+      width: 29%;
+      height: 39%;
+      border-radius: 50%;
+      background: radial-gradient(circle at 52% 52%, #302339 0 30%, #fff8e8 38%);
+    }
+
+    .player-eye:first-child { left: 14%; }
+    .player-eye:last-child { right: 14%; }
+
+    .player-face::after {
+      position: absolute;
+      inset: 65% 40% 9%;
+      border-radius: 50%;
+      background: #663746;
+      content: "";
+    }
+
+    .player::after {
+      position: absolute;
+      inset: 10% 4% 64% 79%;
+      transform: rotate(20deg);
+      border-radius: 65% 0 65% 65%;
+      background: #a2e7fa;
+      content: "";
+    }
   </style>
 </head>
 <body>
   <main>
     <h1>잿빛 지하묘</h1>
-    <div id="room" class="room" role="img" aria-label="돌바닥, 돌벽, 북쪽 중앙의 문으로 이루어진 던전 방"></div>
+    <div id="room" class="room" role="img" aria-label="북쪽 중앙에 문이 있고, 아래쪽 바닥에 겁먹은 보라색 후드의 모험가가 서 있는 돌 던전 방"></div>
   </main>
+
+  <template id="player-template">
+    <div class="player">
+      <div class="player-hood">
+        <div class="player-face">
+          <span class="player-eye"></span>
+          <span class="player-eye"></span>
+        </div>
+      </div>
+    </div>
+  </template>
 
   <script>
     'use strict';
@@ -96,7 +168,8 @@
     // 지도 기호에 대응하는 CSS 클래스를 한곳에서 관리합니다.
     const tileTypes = { '#': 'wall', '.': 'floor', D: 'door' };
     const room = document.getElementById('room');
-    room.style.setProperty('--columns', roomMap[0].length);
+    const columns = roomMap[0].length;
+    room.style.setProperty('--columns', columns);
 
     // 바깥 반복문은 행을, 안쪽 반복문은 그 행의 칸을 순회합니다.
     // 지도 데이터를 읽어 화면 요소를 만드는 과정을 렌더링이라고 합니다.
@@ -107,6 +180,17 @@
         room.append(tile);
       }
     }
+
+    const playerStart = { x: 6, y: 7 };
+    const { x, y } = playerStart;
+    if (roomMap[y]?.[x] !== '.') {
+      throw new Error('캐릭터 시작 위치는 바닥 타일이어야 합니다.');
+    }
+
+    // 앞선 행의 타일 수에 현재 열을 더하면 DOM에서 해당 타일을 찾을 수 있습니다.
+    const startTile = room.children[y * columns + x];
+    const playerTemplate = document.getElementById('player-template');
+    startTile.append(playerTemplate.content.cloneNode(true));
   </script>
 </body>
 </html>
